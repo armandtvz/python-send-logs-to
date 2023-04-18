@@ -70,6 +70,10 @@ class RedisLogHandler(logging.Handler):
         self.attach_date_to_key = attach_date_to_key
         self.redis = self.get_connection()
         self.expire_after = expire_after
+        self.formatter = logging.Formatter(
+            fmt='[{asctime}] {name} | {levelname} | {message}',
+            style='{',
+        )
 
         # Do checks for expire_after value
         if self.expire_after:
