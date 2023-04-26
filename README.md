@@ -1,7 +1,7 @@
 python-send-logs-to
 ===================
 A Python logging handler that sends logs to Redis; later to be a collection
-of logging handlers. 
+of logging handlers.
 
 
 
@@ -46,6 +46,62 @@ Quickstart
        return logger
    ```
 
+
+Django logging example
+----------------------
+
+```python
+# In your project's settings.py file
+# Logging
+# https://docs.djangoproject.com/en/4.2/topics/logging/
+
+default_handlers = []
+if DEBUG:
+    default_handlers += ['console', 'redis']
+    log_level = 'DEBUG'
+
+else:
+    default_handlers += ['redis']
+    log_level = 'WARNING'
+
+default_logger_config = {
+    'handlers': default_handlers,
+    'level': log_level,
+}
+
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+        },
+        'redis': {
+            'class': 'log_to.redis.RedisLogHandler',
+            'key': 'logging:myapp',
+            'host': REDIS_HOST,
+            'port': REDIS_PORT,
+            'password': REDIS_PASSWORD,
+        },
+    },
+    'loggers': {
+        'myapp': default_logger_config,
+        'specific_logger': default_logger_config,
+    },
+}
+```
+
+And then in some module where you want to use the logging:
+
+```python
+import logging
+
+logger = logging.getLogger('myapp')
+# OR
+# logger = logging.getLogger('specific_logger')
+
+logger.info('Testing 123')
+```
 
 
 Compatiblity
