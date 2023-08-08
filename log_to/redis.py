@@ -55,6 +55,9 @@ class RedisLogMixin:
             if redis_namespace.endswith(self.namespace_separator):
                 redis_namespace = redis_namespace[:-1]
 
+        if not self.key and not redis_namespace:
+            redis_namespace = 'logging'
+
         self.redis_namespace = redis_namespace
         self.host = host
         self.port = port
