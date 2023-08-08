@@ -12,7 +12,7 @@ class RedisLogMixin:
     def __init__(
         self,
         key=None,
-        redis_namespace='logging',
+        redis_namespace=None,
         namespace_separator=':',
         host='localhost',
         port=6379,
