@@ -1,4 +1,5 @@
 import logging
+from logging.handlers import MemoryHandler, BufferingHandler
 from datetime import datetime, timezone, timedelta
 
 from redis import StrictRedis
@@ -6,24 +7,13 @@ from redis import StrictRedis
 
 
 
-class RedisLogHandler(logging.Handler):
-    """
-    A logging handler that sends logs to Redis. Uses the Redis list type.
-    Other Redis types may be considered in future.
-
-    An example of a log stored in Redis at a key named
-    "logging:app:2023-01-01+0000":
-
-    .. code-block::
-
-        [2023-01-01 21:12:54,774] app | ERROR | <detail>
-        [2023-01-01 17:12:52,774] app | ERROR | <detail>
-        [2023-01-01 11:12:50,774] app | ERROR | <detail>
-    """
+class RedisLogMixin:
 
     def __init__(
         self,
-        key,
+        key=None,
+        redis_namespace='logging',
+        namespace_separator=':',
         host='localhost',
         port=6379,
         password='',
@@ -59,8 +49,13 @@ class RedisLogHandler(logging.Handler):
                               because the ``NX`` option is used. If Redis 7 or
                               higher is not used no expiry will be set.
         """
-        logging.Handler.__init__(self)
         self.key = key
+        self.namespace_separator = namespace_separator
+        if isinstance(redis_namespace, str):
+            if redis_namespace.endswith(self.namespace_separator):
+                redis_namespace = redis_namespace[:-1]
+
+        self.redis_namespace = redis_namespace
         self.host = host
         self.port = port
         self.password = password
@@ -106,12 +101,20 @@ class RedisLogHandler(logging.Handler):
         return redis
 
 
-    def get_key(self):
+    def get_key(self, record):
         key = self.key
+        if not key:
+            key = record.name
+
+        if self.redis_namespace:
+            # For example: "namespace:mykey"
+            key = f'{self.redis_namespace}{self.namespace_separator}{key}'
+
         if self.attach_date_to_key:
+            # For example: "namespace:mykey:2023-08-08+0000"
             now = datetime.now(tz=timezone.utc)
             today = now.strftime('%Y-%m-%d%z')
-            key = f'{key}:{today}'
+            key = f'{key}{self.namespace_separator}{today}'
         return key
 
 
@@ -136,28 +139,103 @@ class RedisLogHandler(logging.Handler):
         return version
 
 
-    def emit(self, record):
+    def _emit(self, record, **kwargs):
+        pipe = kwargs.get('pipe', None)
+        trim_list = True
+        if not pipe:
+            pipe = self.redis.pipeline()
+        else:
+            trim_list = False
+
+        key = self.get_key(record)
+        record = self.format(record)
+        pipe.lpush(key, record)
+        if self.cap and trim_list:
+            pipe.ltrim(key, 0, self.cap)
+
+        if (
+            self.redis_version >= 7
+            and self.expire_after
+            and trim_list
+        ):
+            pipe.expire(key, self.expire_after, nx=True)
+        # If expire_after set and Redis version lower than 7
+        # redis.exceptions.ResponseError will be thrown when
+        # calling pipe.execute(). Therefore, it's important
+        # to check the Redis version before running execute()
+        if trim_list:
+            pipe.execute()
+
+
+
+
+class RedisLogHandler(RedisLogMixin, logging.Handler):
+    """
+    A logging handler that sends logs to Redis. Uses the Redis list type.
+    Other Redis types may be considered in future.
+
+    An example of a log stored in Redis at a key named
+    "logging:app:2023-01-01+0000":
+
+    .. code-block::
+
+        [2023-01-01 21:12:54,774] app | ERROR | <detail>
+        [2023-01-01 17:12:52,774] app | ERROR | <detail>
+        [2023-01-01 11:12:50,774] app | ERROR | <detail>
+    """
+
+    def __init__(self, *args, **kwargs):
+        logging.Handler.__init__(self)
+        super().__init__(*args, **kwargs)
+
+
+    def emit(self, record, **kwargs):
         """
         Insert the log record at the head of a Redis list by doing an ``LPUSH``.
         """
         try:
-            key = self.get_key()
-            record = self.format(record)
-            pipe = self.redis.pipeline()
-            pipe.lpush(key, record)
-            if self.cap:
-                pipe.ltrim(key, 0, self.cap)
+            self._emit(record, **kwargs)
+        except Exception:
+            self.handleError(record)
 
-            if (
-                self.redis_version >= 7
-                and self.expire_after
-            ):
-                pipe.expire(key, self.expire_after, nx=True)
-            # If expire_after set and Redis version lower than 7
-            # redis.exceptions.ResponseError will be thrown when
-            # calling pipe.execute(). Therefore, it's important
-            # to check the Redis version before running execute()
+
+
+
+class RedisBufferedLogHandler(RedisLogMixin, BufferingHandler):
+
+    def __init__(
+        self,
+        capacity,
+        *args,
+        **kwargs,
+    ):
+        self.flushLevel = None
+        try:
+            self.flushLevel = kwargs.pop('flushLevel')
+        except KeyError:
+            self.flushLevel = logging.ERROR
+        BufferingHandler.__init__(self, capacity)
+        super().__init__(*args, **kwargs)
+
+
+    def shouldFlush(self, record):
+        """
+        Check for buffer full or a record at the flushLevel or higher.
+        """
+        return (len(self.buffer) >= self.capacity) or \
+                (record.levelno >= self.flushLevel)
+
+
+    def flush(self):
+        try:
+            if not self.buffer:
+                return
+            pipe = self.redis.pipeline()
+
+            for record in self.buffer:
+                self._emit(record, pipe=pipe)
             pipe.execute()
+            self.buffer.clear()
 
         except Exception:
             self.handleError(record)
