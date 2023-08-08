@@ -19,6 +19,7 @@ class RedisLogMixin:
         password='',
         db=0,
         charset='utf-8',
+        socket_connect_timeout=10,
         cap=100_000,
         attach_date_to_key=True,
         expire_after=timedelta(days=61),
@@ -64,6 +65,7 @@ class RedisLogMixin:
         self.password = password
         self.db = db
         self.charset = charset
+        self.socket_connect_timeout = socket_connect_timeout
         self.cap = cap
         self.attach_date_to_key = attach_date_to_key
         self.redis = self.get_connection()
@@ -100,6 +102,7 @@ class RedisLogMixin:
             db=self.db,
             encoding=self.charset,
             decode_responses=True,
+            socket_connect_timeout=self.socket_connect_timeout,
         )
         return redis
 
