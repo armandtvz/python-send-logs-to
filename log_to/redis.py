@@ -136,7 +136,7 @@ class RedisLogMixin:
         version = version[0]
         try:
             version = int(version)
-        except ValueError:
+        except (ValueError, TypeError):
             # If first character of version
             # cannot be cast to an integer;
             # rather play it safe and set
